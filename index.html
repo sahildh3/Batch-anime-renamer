@@ -1,482 +1,372 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Anime Episode Renamer</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-            color: white;
-        }
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-        }
-        .card {
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            border-radius: 15px;
-            padding: 20px;
-            margin-bottom: 20px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-        }
-        h1 {
-            font-size: 28px;
-            margin-bottom: 10px;
-        }
-        h2 {
-            font-size: 20px;
-            margin-bottom: 15px;
-        }
-        .subtitle {
-            opacity: 0.8;
-            font-size: 14px;
-        }
-        label {
-            display: block;
-            margin-bottom: 8px;
-            font-size: 14px;
-            font-weight: 500;
-        }
-        input, select {
-            width: 100%;
-            padding: 12px;
-            border-radius: 8px;
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            background: rgba(255, 255, 255, 0.2);
-            color: white;
-            font-size: 16px;
-            margin-bottom: 15px;
-        }
-        input::placeholder {
-            color: rgba(255, 255, 255, 0.5);
-        }
-        .row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-        }
-        button {
-            width: 100%;
-            padding: 15px;
-            border-radius: 8px;
-            border: none;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-        .btn-primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-        }
-        .btn-success {
-            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
-            color: white;
-        }
-        .btn-danger {
-            background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
-            color: white;
-        }
-        button:active {
-            transform: scale(0.98);
-        }
-        .file-item {
-            background: rgba(255, 255, 255, 0.1);
-            padding: 12px;
-            border-radius: 8px;
-            margin-bottom: 10px;
-        }
-        .file-name {
-            font-size: 14px;
-            word-break: break-all;
-            margin-bottom: 5px;
-        }
-        .file-size {
-            font-size: 12px;
-            opacity: 0.7;
-        }
-        .old-name {
-            opacity: 0.6;
-            font-size: 13px;
-        }
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 15px;
-            text-align: center;
-        }
-        .stat-box {
-            background: rgba(255, 255, 255, 0.1);
-            padding: 15px;
-            border-radius: 8px;
-        }
-        .stat-value {
-            font-size: 24px;
-            font-weight: bold;
-            margin-top: 5px;
-        }
-        .stat-label {
-            font-size: 12px;
-            opacity: 0.8;
-        }
-        .hidden {
-            display: none;
-        }
-        .empty-state {
-            text-align: center;
-            padding: 40px 20px;
-        }
-        .empty-icon {
-            font-size: 60px;
-            margin-bottom: 15px;
-            opacity: 0.5;
-        }
-        #fileInput {
-            display: none;
-        }
-        .button-group {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-bottom: 15px;
-        }
-        .status-good { color: #38ef7d; }
-        .status-warning { color: #ffd700; }
-        .status-danger { color: #ff6b6b; }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0b14" />
+  <meta name="description" content="Professional batch video renamer with smart episode/season detection. 100% offline, privacy-first." />
+
+  <!-- PWA Manifest -->
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="styles.css" />
+
+  <title>Video Specialist Renamer V3</title>
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <div class="card">
-            <h1>📹 Anime Episode Renamer</h1>
-            <p class="subtitle">Batch rename your anime episodes with custom patterns</p>
-        </div>
 
-        <!-- Settings -->
-        <div class="card">
-            <h2>⚙️ Rename Settings</h2>
-            
-            <label>Anime Name</label>
-            <input type="text" id="animeName" placeholder="e.g., Demon Slayer">
-            
-            <div class="row">
-                <div>
-                    <label>Season</label>
-                    <input type="text" id="season" value="01">
-                </div>
-                <div>
-                    <label>Start Episode</label>
-                    <input type="number" id="startEpisode" value="1" min="1">
-                </div>
-            </div>
-            
-            <label>Naming Pattern</label>
-            <select id="pattern">
-                <option value="{name} - S{season}E{episode}">Standard: Name - S01E01</option>
-                <option value="{name} S{season}E{episode}">Compact: Name S01E01</option>
-                <option value="{name} Episode {episode}">Simple: Name Episode 01</option>
-                <option value="{name} - Episode {episode}">Dash: Name - Episode 01</option>
-                <option value="{name} - Ep{episode}">Short: Name - Ep01</option>
-                <option value="{name} [{episode}]">Brackets: Name [01]</option>
-                <option value="{name} ({episode})">Parentheses: Name (01)</option>
-                <option value="[{name}] - {episode}">Reverse Brackets: [Name] - 01</option>
-                <option value="{episode} - {name}">Episode First: 01 - Name</option>
-            </select>
-            
-            <input type="file" id="fileInput" multiple accept="video/*">
-            <button class="btn-primary" onclick="document.getElementById('fileInput').click()">
-                📤 Select Episode Files
-            </button>
-        </div>
+  <!-- ░░ AMBIENT BACKGROUND LAYERS ░░ -->
+  <div class="bg-mesh" aria-hidden="true">
+    <div class="bg-orb bg-orb--1"></div>
+    <div class="bg-orb bg-orb--2"></div>
+    <div class="bg-orb bg-orb--3"></div>
+    <div class="bg-grid"></div>
+  </div>
 
-        <!-- Stats -->
-        <div id="statsCard" class="card hidden">
-            <div class="stats">
-                <div class="stat-box">
-                    <div class="stat-label">Total Files</div>
-                    <div class="stat-value" id="totalFiles">0</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-label">Total Size</div>
-                    <div class="stat-value" id="totalSize">0 MB</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-label">Avg Size</div>
-                    <div class="stat-value" id="avgSize">0 MB</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-label">Status</div>
-                    <div class="stat-value" id="memStatus">✓ Good</div>
-                </div>
-            </div>
+  <!-- ░░ TOP HEADER BAR ░░ -->
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="brand">
+        <span class="brand-icon" aria-hidden="true">◈</span>
+        <div class="brand-text">
+          <h1 class="brand-title">Video Specialist Renamer</h1>
+          <p class="brand-sub">Smart batch rename · Offline-first · Privacy guaranteed</p>
         </div>
+      </div>
+      <div class="header-badges">
+        <span class="badge badge--offline" id="offlineBadge" title="Works offline">
+          <span class="badge-dot"></span>Offline Ready
+        </span>
+        <span class="badge badge--version">V3.0</span>
+      </div>
+    </div>
+  </header>
 
-        <!-- File List -->
-        <div id="fileListCard" class="card hidden">
-            <h2>Files (<span id="fileCount">0</span>)</h2>
-            
-            <div class="button-group">
-                <button onclick="togglePreview()">👁️ Toggle Preview</button>
-                <button class="btn-danger" onclick="clearAll()">🗑️ Clear All</button>
-            </div>
-            
-            <div id="fileList"></div>
-            
-            <button class="btn-success" onclick="downloadZip()" id="downloadBtn">
-                📥 Download All as ZIP
-            </button>
-        </div>
+  <!-- ░░ MAIN CONTENT ░░ -->
+  <main class="main-layout" id="app">
 
-        <!-- Empty State -->
-        <div id="emptyState" class="card">
-            <div class="empty-state">
-                <div class="empty-icon">📹</div>
-                <h3>No files selected</h3>
-                <p class="subtitle">Upload your anime episodes to get started</p>
-            </div>
+    <!-- ╔══════════════════════════════╗ -->
+    <!-- ║  PANEL 1 · RENAME SETTINGS  ║ -->
+    <!-- ╚══════════════════════════════╝ -->
+    <section class="glass-card settings-panel" aria-label="Rename settings">
+      <div class="card-header">
+        <span class="card-icon">⚙</span>
+        <h2 class="card-title">Rename Settings</h2>
+      </div>
+
+      <div class="field-group">
+        <label class="field-label" for="animeName">
+          Series / Show Name
+          <span class="field-hint">Used in output filename</span>
+        </label>
+        <input
+          class="field-input"
+          type="text"
+          id="animeName"
+          placeholder="e.g., Demon Slayer"
+          autocomplete="off"
+          spellcheck="false"
+        />
+      </div>
+
+      <div class="field-row">
+        <div class="field-group">
+          <label class="field-label" for="season">Season</label>
+          <input
+            class="field-input field-input--short"
+            type="text"
+            id="season"
+            value="01"
+            maxlength="4"
+            placeholder="01"
+          />
         </div>
+        <div class="field-group">
+          <label class="field-label" for="startEpisode">Start Episode #</label>
+          <input
+            class="field-input field-input--short"
+            type="number"
+            id="startEpisode"
+            value="1"
+            min="0"
+            max="9999"
+          />
+        </div>
+        <div class="field-group">
+          <label class="field-label" for="padWidth">Zero-Pad Width</label>
+          <select class="field-input field-input--short" id="padWidth">
+            <option value="2">2 → E01</option>
+            <option value="3">3 → E001</option>
+            <option value="1">1 → E1</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="field-group">
+        <label class="field-label" for="pattern">
+          Naming Pattern
+          <span class="field-hint">Use {name}, {season}, {episode}</span>
+        </label>
+        <select class="field-input" id="pattern">
+          <option value="{name} - S{season}E{episode}">Standard  →  Show - S01E01</option>
+          <option value="{name} S{season}E{episode}">Compact  →  Show S01E01</option>
+          <option value="{name} - {season}x{episode}">Scene  →  Show - 1x01</option>
+          <option value="{name} - Episode {episode}">Episode  →  Show - Episode 01</option>
+          <option value="{name} - Ep{episode}">Short  →  Show - Ep01</option>
+          <option value="{name} [{episode}]">Brackets  →  Show [01]</option>
+          <option value="{name} ({season}x{episode})">Parens  →  Show (1x01)</option>
+          <option value="{episode} - {name}">Ep-First  →  01 - Show</option>
+          <option value="custom">✏ Custom pattern…</option>
+        </select>
+      </div>
+
+      <!-- Custom pattern field (hidden by default) -->
+      <div class="field-group hidden" id="customPatternGroup">
+        <label class="field-label" for="customPattern">Custom Pattern</label>
+        <input
+          class="field-input field-input--mono"
+          type="text"
+          id="customPattern"
+          placeholder="{name} - S{season}E{episode} [{quality}]"
+        />
+      </div>
+
+      <!-- Smart Clean Toggle Row -->
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <span class="toggle-title">Smart Clean</span>
+          <span class="toggle-desc">Strip release groups, codecs & junk tags automatically</span>
+        </div>
+        <label class="toggle-switch" aria-label="Toggle Smart Clean">
+          <input type="checkbox" id="smartClean" checked />
+          <span class="toggle-track">
+            <span class="toggle-thumb"></span>
+          </span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <span class="toggle-title">Auto-Detect Episode #</span>
+          <span class="toggle-desc">Use regex detection instead of sequential numbering</span>
+        </div>
+        <label class="toggle-switch" aria-label="Toggle Auto-Detect">
+          <input type="checkbox" id="autoDetect" checked />
+          <span class="toggle-track">
+            <span class="toggle-thumb"></span>
+          </span>
+        </label>
+      </div>
+    </section>
+
+    <!-- ╔══════════════════════════════╗ -->
+    <!-- ║  PANEL 2 · FILE DROP ZONE   ║ -->
+    <!-- ╚══════════════════════════════╝ -->
+    <section class="glass-card dropzone-panel" aria-label="File selection">
+      <div class="card-header">
+        <span class="card-icon">◎</span>
+        <h2 class="card-title">Load Files</h2>
+      </div>
+
+      <!-- Drop Zone -->
+      <div
+        class="drop-zone"
+        id="dropZone"
+        role="button"
+        tabindex="0"
+        aria-label="Drop video files here or click to browse"
+      >
+        <div class="drop-zone__inner">
+          <div class="drop-zone__icon" aria-hidden="true">
+            <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+              <path d="M8 36V32C8 28.686 10.686 26 14 26H34C37.314 26 40 28.686 40 32V36" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <path d="M24 26V10M24 10L17 17M24 10L31 17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="24" cy="24" r="22" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 4" opacity="0.3"/>
+            </svg>
+          </div>
+          <p class="drop-zone__primary">Drop video files here</p>
+          <p class="drop-zone__secondary">or tap to browse · MKV, MP4, AVI, MOV &amp; more</p>
+          <div class="drop-zone__formats">
+            <span class="format-tag">MKV</span>
+            <span class="format-tag">MP4</span>
+            <span class="format-tag">AVI</span>
+            <span class="format-tag">MOV</span>
+            <span class="format-tag">WMV</span>
+            <span class="format-tag">FLV</span>
+            <span class="format-tag">WEBM</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hidden file input (label triggers it) -->
+      <input
+        type="file"
+        id="fileInput"
+        class="sr-only"
+        multiple
+        accept="video/*,.mkv,.avi,.wmv,.flv,.webm,.m4v,.3gp"
+        aria-label="Select video files"
+      />
+
+      <!-- FSA button (shown only on supported browsers) -->
+      <div class="action-row" id="fsaRow" style="display:none">
+        <button class="btn btn--glass" id="fsaOpenBtn" title="Use File System Access API for direct folder access">
+          <span class="btn-icon">📁</span> Open Folder (Desktop)
+        </button>
+      </div>
+    </section>
+
+    <!-- ╔══════════════════════════════╗ -->
+    <!-- ║  PANEL 3 · STATS BAR        ║ -->
+    <!-- ╚══════════════════════════════╝ -->
+    <section class="glass-card stats-panel hidden" id="statsPanel" aria-label="File statistics">
+      <div class="stats-grid">
+        <div class="stat-cell">
+          <span class="stat-value" id="statTotal">0</span>
+          <span class="stat-label">Total Files</span>
+        </div>
+        <div class="stat-cell">
+          <span class="stat-value" id="statSize">0 MB</span>
+          <span class="stat-label">Total Size</span>
+        </div>
+        <div class="stat-cell">
+          <span class="stat-value" id="statDetected">0</span>
+          <span class="stat-label">Ep. Detected</span>
+        </div>
+        <div class="stat-cell">
+          <span class="stat-value" id="statStatus" data-status="good">✓</span>
+          <span class="stat-label">Memory</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ╔══════════════════════════════╗ -->
+    <!-- ║  PANEL 4 · FILE LIST        ║ -->
+    <!-- ╚══════════════════════════════╝ -->
+    <section class="glass-card filelist-panel hidden" id="fileListPanel" aria-label="File list">
+      <div class="card-header">
+        <span class="card-icon">≡</span>
+        <h2 class="card-title">
+          Preview &amp; Edit
+          <span class="badge badge--count" id="fileCountBadge">0</span>
+        </h2>
+        <div class="card-actions">
+          <button class="btn btn--icon" id="togglePreviewBtn" title="Toggle preview mode" aria-label="Toggle old/new name preview">
+            <span>👁</span>
+          </button>
+          <button class="btn btn--icon btn--danger" id="clearAllBtn" title="Clear all files" aria-label="Clear all files">
+            <span>✕</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- List Header -->
+      <div class="filelist-header" id="fileListHeader">
+        <span class="col col--index">#</span>
+        <span class="col col--old">Original Name</span>
+        <span class="col col--arrow"></span>
+        <span class="col col--new">New Name</span>
+        <span class="col col--size">Size</span>
+        <span class="col col--ep">EP#</span>
+      </div>
+
+      <!-- Scrollable list container -->
+      <div class="filelist-scroll" id="fileList" role="list" aria-live="polite">
+        <!-- File items injected by app.js -->
+      </div>
+
+      <!-- Bulk edit: episode offset -->
+      <div class="bulk-edit-row">
+        <label class="field-label field-label--inline" for="epOffset">Episode Offset:</label>
+        <input
+          class="field-input field-input--tiny"
+          type="number"
+          id="epOffset"
+          value="0"
+          title="Add/subtract this value from all detected episode numbers"
+        />
+        <button class="btn btn--sm btn--glass" id="applyOffsetBtn">Apply</button>
+        <button class="btn btn--sm btn--glass" id="sortAscBtn" title="Sort files ascending by detected episode">↑ Sort</button>
+        <button class="btn btn--sm btn--glass" id="sortDescBtn" title="Sort files descending">↓ Sort</button>
+      </div>
+    </section>
+
+    <!-- ╔══════════════════════════════╗ -->
+    <!-- ║  PANEL 5 · EXPORT ACTIONS   ║ -->
+    <!-- ╚══════════════════════════════╝ -->
+    <section class="glass-card export-panel hidden" id="exportPanel" aria-label="Export options">
+      <div class="card-header">
+        <span class="card-icon">↓</span>
+        <h2 class="card-title">Export</h2>
+      </div>
+
+      <div class="export-grid">
+        <!-- Primary: ZIP -->
+        <button class="btn btn--primary btn--export" id="downloadZipBtn">
+          <span class="btn-icon">◧</span>
+          <span class="btn-label">Download as ZIP</span>
+          <span class="btn-sub" id="zipSizeEstimate"></span>
+        </button>
+
+        <!-- FSA: Direct save (desktop only) -->
+        <button class="btn btn--glass btn--export hidden" id="fsaSaveBtn">
+          <span class="btn-icon">💾</span>
+          <span class="btn-label">Save to Folder</span>
+          <span class="btn-sub">File System API</span>
+        </button>
+
+        <!-- Rename script -->
+        <button class="btn btn--glass btn--export" id="downloadScriptBtn">
+          <span class="btn-icon">⌘</span>
+          <span class="btn-label">Bash/Batch Script</span>
+          <span class="btn-sub">rename commands only</span>
+        </button>
+
+        <!-- CSV log -->
+        <button class="btn btn--glass btn--export" id="downloadCsvBtn">
+          <span class="btn-icon">≡</span>
+          <span class="btn-label">Export CSV Log</span>
+          <span class="btn-sub">original → new mapping</span>
+        </button>
+      </div>
+
+      <!-- Progress bar (shown during ZIP gen) -->
+      <div class="progress-wrap hidden" id="progressWrap">
+        <div class="progress-bar">
+          <div class="progress-fill" id="progressFill" style="width:0%"></div>
+        </div>
+        <p class="progress-label" id="progressLabel">Preparing…</p>
+      </div>
+    </section>
+
+    <!-- ╔══════════════════════════════╗ -->
+    <!-- ║  EMPTY STATE                ║ -->
+    <!-- ╚══════════════════════════════╝ -->
+    <div class="empty-state glass-card" id="emptyState" aria-live="polite">
+      <div class="empty-state__icon" aria-hidden="true">◈</div>
+      <h3 class="empty-state__title">No files loaded yet</h3>
+      <p class="empty-state__body">
+        Drop your video files above — or tap the drop zone to browse.<br />
+        <strong>S01E01</strong>, <strong>1x01</strong>, <strong>EP01</strong> formats detected automatically.
+      </p>
     </div>
 
-    <script>
-        let files = [];
-        let showPreview = false;
+  </main>
 
-        // ADVANCED SORTING - Inspired by MX Player's episode detection
-        function extractEpisodeNumber(filename) {
-            // Remove file extension
-            let name = filename.replace(/\.[^/.]+$/, '');
-            
-            // Remove common quality/fansub tags
-            name = name.replace(/\[.*?\]/g, ' '); // Remove [tags]
-            name = name.replace(/\(.*?\)/g, ' '); // Remove (tags)
-            
-            // Patterns to detect episode numbers (in priority order)
-            const patterns = [
-                /[Ss](\d+)[Ee](\d+)/,           // S01E05 or s01e05
-                /[Ee][Pp]?[\s._-]*(\d+)/i,      // EP05, Ep05, E05, ep05
-                /[Ee]pisode[\s._-]*(\d+)/i,     // Episode 05, episode05
-                /[\s._-](\d{2,3})[\s._-]/,      // " 05 ", ".05.", "_05_"
-                /^(\d{2,3})[\s._-]/,            // "05 " at start
-                /[\s._-](\d{2,3})$/,            // " 05" at end
-                /[\s._-](\d{1,3})[\s._-]/,      // Single/double digit anywhere
-            ];
-            
-            for (let pattern of patterns) {
-                const match = name.match(pattern);
-                if (match) {
-                    // For S01E05 format, return episode number (not season)
-                    if (pattern.source.includes('[Ss]')) {
-                        return parseInt(match[2]);
-                    }
-                    return parseInt(match[1]);
-                }
-            }
-            
-            // Fallback: find ANY number in the filename
-            const numbers = name.match(/\d+/g);
-            if (numbers && numbers.length > 0) {
-                // Return the first reasonable episode number (1-999)
-                for (let num of numbers) {
-                    const parsed = parseInt(num);
-                    if (parsed >= 0 && parsed <= 999) {
-                        return parsed;
-                    }
-                }
-            }
-            
-            return 0; // Default if no number found
-        }
+  <!-- ░░ TOAST NOTIFICATION ░░ -->
+  <div class="toast-container" id="toastContainer" aria-live="assertive" aria-atomic="true"></div>
 
-        function smartSort(files) {
-            return files.sort((a, b) => {
-                const episodeA = extractEpisodeNumber(a.name);
-                const episodeB = extractEpisodeNumber(b.name);
-                
-                // Sort by episode number
-                if (episodeA !== episodeB) {
-                    return episodeA - episodeB;
-                }
-                
-                // If episode numbers are same, sort alphabetically
-                return a.name.localeCompare(b.name, undefined, {
-                    numeric: true,
-                    sensitivity: 'base'
-                });
-            });
-        }
+  <!-- ░░ FOOTER ░░ -->
+  <footer class="app-footer">
+    <p>Video Specialist Renamer V3 · 100% client-side · No uploads · No tracking</p>
+  </footer>
 
-        document.getElementById('fileInput').addEventListener('change', function(e) {
-            const selectedFiles = Array.from(e.target.files);
-            console.log('Files selected:', selectedFiles.length);
-            
-            if (selectedFiles.length === 0) {
-                alert('No files selected!');
-                return;
-            }
-            
-            // CRITICAL FIX: Smart sort files using MX Player-style detection!
-            const sortedFiles = smartSort(selectedFiles);
-            
-            console.log('Files after smart sorting:');
-            sortedFiles.forEach((f, i) => {
-                console.log(`${i + 1}. ${f.name} (detected ep: ${extractEpisodeNumber(f.name)})`);
-            });
-            
-            files = sortedFiles.map((file, index) => {
-                const newName = generateName(file.name, index);
-                return {
-                    file: file,
-                    oldName: file.name,
-                    newName: newName,
-                    size: file.size
-                };
-            });
-            
-            updateUI();
-        });
+  <!-- ░░ SCRIPTS (module order matters) ░░ -->
+  <script src="jszip.min.js"></script>
+  <script src="parser.js"></script>
+  <script src="app.js"></script>
 
-        function generateName(oldName, index) {
-            const ext = oldName.substring(oldName.lastIndexOf('.'));
-            const animeName = document.getElementById('animeName').value || 'Anime';
-            const season = document.getElementById('season').value || '01';
-            const startEp = parseInt(document.getElementById('startEpisode').value) || 1;
-            const pattern = document.getElementById('pattern').value;
-            const episode = String(startEp + index).padStart(2, '0');
-            
-            return pattern
-                .replace(/{name}/g, animeName)
-                .replace(/{season}/g, season)
-                .replace(/{episode}/g, episode) + ext;
-        }
-
-        function updateUI() {
-            console.log('Updating UI with', files.length, 'files');
-            
-            if (files.length === 0) {
-                document.getElementById('emptyState').classList.remove('hidden');
-                document.getElementById('statsCard').classList.add('hidden');
-                document.getElementById('fileListCard').classList.add('hidden');
-                return;
-            }
-            
-            document.getElementById('emptyState').classList.add('hidden');
-            document.getElementById('statsCard').classList.remove('hidden');
-            document.getElementById('fileListCard').classList.remove('hidden');
-            
-            // Update stats
-            const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
-            const totalMB = (totalBytes / (1024 * 1024)).toFixed(2);
-            const avgMB = (totalBytes / files.length / (1024 * 1024)).toFixed(2);
-            
-            document.getElementById('totalFiles').textContent = files.length;
-            document.getElementById('totalSize').textContent = totalMB + ' MB';
-            document.getElementById('avgSize').textContent = avgMB + ' MB';
-            document.getElementById('fileCount').textContent = files.length;
-            
-            const memStatus = document.getElementById('memStatus');
-            if (totalBytes < 1024 * 1024 * 1024) {
-                memStatus.textContent = '✓ Good';
-                memStatus.className = 'stat-value status-good';
-            } else if (totalBytes < 1.5 * 1024 * 1024 * 1024) {
-                memStatus.textContent = '⚠ High';
-                memStatus.className = 'stat-value status-warning';
-            } else {
-                memStatus.textContent = '✗ Risk';
-                memStatus.className = 'stat-value status-danger';
-            }
-            
-            // Update file list
-            renderFileList();
-        }
-
-        function renderFileList() {
-            const html = files.map((f, i) => `
-                <div class="file-item">
-                    ${showPreview ? `
-                        <div class="old-name">Old: ${f.oldName}</div>
-                        <div class="file-name"><strong>New: ${f.newName}</strong></div>
-                    ` : `
-                        <div class="file-name">${f.newName}</div>
-                    `}
-                    <div class="file-size">${(f.size / (1024 * 1024)).toFixed(2)} MB</div>
-                </div>
-            `).join('');
-            
-            document.getElementById('fileList').innerHTML = html;
-        }
-
-        function togglePreview() {
-            showPreview = !showPreview;
-            renderFileList();
-        }
-
-        function clearAll() {
-            files = [];
-            document.getElementById('fileInput').value = '';
-            document.getElementById('animeName').value = '';
-            updateUI();
-        }
-
-        async function downloadZip() {
-            const btn = document.getElementById('downloadBtn');
-            btn.disabled = true;
-            btn.textContent = '⏳ Processing...';
-            
-            try {
-                const zip = new JSZip();
-                
-                for (let f of files) {
-                    const arrayBuffer = await f.file.arrayBuffer();
-                    zip.file(f.newName, arrayBuffer);
-                }
-                
-                const blob = await zip.generateAsync({ type: 'blob' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = (document.getElementById('animeName').value || 'Renamed_Episodes') + '.zip';
-                a.click();
-                URL.revokeObjectURL(url);
-                
-                btn.disabled = false;
-                btn.textContent = '✅ Downloaded! Click to download again';
-                setTimeout(() => {
-                    btn.textContent = '📥 Download All as ZIP';
-                }, 3000);
-            } catch (error) {
-                alert('Error: ' + error.message + '\nTry with fewer/smaller files.');
-                btn.disabled = false;
-                btn.textContent = '📥 Download All as ZIP';
-            }
-        }
-
-        // Update names when settings change
-        document.getElementById('animeName').addEventListener('input', updateNames);
-        document.getElementById('season').addEventListener('input', updateNames);
-        document.getElementById('startEpisode').addEventListener('input', updateNames);
-        document.getElementById('pattern').addEventListener('change', updateNames);
-
-        function updateNames() {
-            if (files.length > 0) {
-                files = files.map((f, i) => ({
-                    ...f,
-                    newName: generateName(f.oldName, i)
-                }));
-                renderFileList();
-            }
-        }
-    </script>
 </body>
 </html>
