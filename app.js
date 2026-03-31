@@ -2,9 +2,15 @@
  * app.js — Video Specialist Renamer V3
  * ─────────────────────────────────────────────────────────────────
  * UI controller / event wiring. Depends on:
- *   • parser.js  (window.VSRParser)
- *   • jszip.min.js (window.JSZip)
- *   • styles.css
+ *   • parser.js     (window.VSRParser)   — must load before this file
+ *   • jszip.min.js  (window.JSZip)       — must load before this file
+ *
+ * ┌─────────────────────────────────────────────────────────────┐
+ * │  CRITICAL: ALL document.getElementById() calls live inside  │
+ * │  init(). The DOM object is built there, after the browser   │
+ * │  has fully parsed the HTML. Building it at the top level    │
+ * │  (parse time) returns null for every element.               │
+ * └─────────────────────────────────────────────────────────────┘
  *
  * Architecture:
  *   State → render() → DOM
@@ -15,13 +21,13 @@
 'use strict';
 
 /* ================================================================
-   1. APP STATE
+   1. APP STATE  (safe to define at parse time — no DOM access)
    ================================================================ */
 let state = {
-  files:       [],      // Array of FileEntry objects (see below)
-  showOld:     false,   // Toggle old name column visibility
-  epOffset:    0,       // Global episode offset applied to all detections
-  sortDir:     'asc',   // 'asc' | 'desc'
+  files:    [],
+  showOld:  true,
+  epOffset: 0,
+  sortDir:  'asc',
   settings: {
     seriesName: '',
     season:     '01',
@@ -34,561 +40,458 @@ let state = {
   },
 };
 
-/**
- * FileEntry shape:
- * {
- *   id:        string    – unique key
- *   file:      File
- *   oldName:   string    – original filename
- *   newName:   string    – computed output name
- *   size:      number    – bytes
- *   detected:  bool      – was episode auto-detected
- *   ep:        number|null
- *   season:    number|null
- * }
- */
+// DOM refs — populated inside init() AFTER DOMContentLoaded
+let DOM = {};
 
 /* ================================================================
-   2. DOM REFS
-   ================================================================ */
-const $ = id => document.getElementById(id);
-
-const DOM = {
-  fileInput:        $('fileInput'),
-  dropZone:         $('dropZone'),
-  fsaRow:           $('fsaRow'),
-  fsaOpenBtn:       $('fsaOpenBtn'),
-  fsaSaveBtn:       $('fsaSaveBtn'),
-
-  statsPanel:       $('statsPanel'),
-  statTotal:        $('statTotal'),
-  statSize:         $('statSize'),
-  statDetected:     $('statDetected'),
-  statStatus:       $('statStatus'),
-
-  fileListPanel:    $('fileListPanel'),
-  fileList:         $('fileList'),
-  fileListHeader:   $('fileListHeader'),
-  fileCountBadge:   $('fileCountBadge'),
-  togglePreviewBtn: $('togglePreviewBtn'),
-  clearAllBtn:      $('clearAllBtn'),
-
-  exportPanel:      $('exportPanel'),
-  emptyState:       $('emptyState'),
-  progressWrap:     $('progressWrap'),
-  progressFill:     $('progressFill'),
-  progressLabel:    $('progressLabel'),
-  zipSizeEstimate:  $('zipSizeEstimate'),
-  toastContainer:   $('toastContainer'),
-  offlineBadge:     $('offlineBadge'),
-
-  // Settings inputs
-  animeName:        $('animeName'),
-  season:           $('season'),
-  startEpisode:     $('startEpisode'),
-  padWidth:         $('padWidth'),
-  pattern:          $('pattern'),
-  customPatternGroup: $('customPatternGroup'),
-  customPattern:    $('customPattern'),
-  smartClean:       $('smartClean'),
-  autoDetect:       $('autoDetect'),
-  epOffset:         $('epOffset'),
-
-  // Export
-  downloadZipBtn:   $('downloadZipBtn'),
-  downloadScriptBtn:$('downloadScriptBtn'),
-  downloadCsvBtn:   $('downloadCsvBtn'),
-
-  // Sort / offset
-  applyOffsetBtn:   $('applyOffsetBtn'),
-  sortAscBtn:       $('sortAscBtn'),
-  sortDescBtn:      $('sortDescBtn'),
-};
-
-/* ================================================================
-   3. STATE MUTATIONS
+   2. STATE MUTATIONS
    ================================================================ */
 function setState(patch) {
   if (patch.settings) {
     state.settings = { ...state.settings, ...patch.settings };
   }
-  Object.assign(state, patch);
+  const { settings: _s, ...rest } = patch;
+  Object.assign(state, rest);
   render();
 }
 
 /* ================================================================
-   4. FILE PROCESSING
+   3. FILE PROCESSING
    ================================================================ */
 function processFiles(rawFiles) {
   if (!rawFiles || rawFiles.length === 0) return;
-
-  const { Parser } = getParser();
-  let sorted = Parser.smartSort(Array.from(rawFiles));
-
+  const sorted  = VSRParser.smartSort(Array.from(rawFiles));
   const entries = sorted.map((file, idx) => {
-    const info = Parser.extractEpisodeInfo(file.name);
-    const entry = buildEntry(file, info, idx);
-    return entry;
+    return buildEntry(file, VSRParser.extractEpisodeInfo(file.name), idx);
   });
-
   setState({ files: entries });
-  showToast(`Loaded ${entries.length} file${entries.length !== 1 ? 's' : ''}`, 'success');
+  showToast('Loaded ' + entries.length + ' file' + (entries.length !== 1 ? 's' : ''), 'success');
 }
 
 function buildEntry(file, info, seqIdx) {
-  const s     = state.settings;
-  const ep    = s.autoDetect && info.episode !== null
-                  ? info.episode + state.epOffset
-                  : (s.startEp - 1) + seqIdx + 1 + state.epOffset;
-  const season = info.season ?? parseInt(s.season, 10) || 1;
-
-  const cleanedTitle = s.smartClean
-    ? VSRParser.smartClean(file.name)
-    : (s.seriesName || 'Show');
-
-  const baseName = s.seriesName.trim() || cleanedTitle || 'Show';
-
+  const s      = state.settings;
+  const rawEp  = (s.autoDetect && info.episode !== null) ? info.episode : (s.startEp + seqIdx);
+  const ep     = Math.max(0, rawEp + state.epOffset);
+  const season = info.season ?? (parseInt(s.season, 10) || 1);
+  const clean  = s.smartClean ? VSRParser.smartClean(file.name) : 'Show';
+  const base   = s.seriesName.trim() || clean || 'Show';
   const newName = VSRParser.generateNewName({
-    pattern:    getPattern(),
-    seriesName: baseName,
-    season:     season,
-    episode:    Math.max(0, ep),
-    padWidth:   s.padWidth,
+    pattern:    getActivePattern(),
+    seriesName: base,
+    season, episode: ep, padWidth: s.padWidth,
     extension:  VSRParser.getExtension(file.name),
   });
-
-  return {
-    id:       `${file.name}-${file.size}-${file.lastModified}`,
-    file,
-    oldName:  file.name,
-    newName,
-    size:     file.size,
-    detected: info.detected,
-    ep:       ep,
-    season,
-  };
+  return { id: file.name + '-' + file.size, file, oldName: file.name, newName,
+           size: file.size, detected: info.detected, ep, season };
 }
 
 function rebuildNames() {
   if (state.files.length === 0) return;
-  const updated = state.files.map((entry, idx) => {
-    const info = VSRParser.extractEpisodeInfo(entry.oldName);
-    return buildEntry(entry.file, info, idx);
-  });
-  setState({ files: updated });
+  state.files = state.files.map((entry, idx) =>
+    buildEntry(entry.file, VSRParser.extractEpisodeInfo(entry.oldName), idx)
+  );
+  render();
 }
 
-function getPattern() {
+function getActivePattern() {
   const s = state.settings;
-  return s.pattern === 'custom' ? (s.customPat || '{name} - S{season}E{episode}') : s.pattern;
-}
-
-function getParser() {
-  return { Parser: window.VSRParser };
+  return s.pattern === 'custom'
+    ? (s.customPat.trim() || '{name} - S{season}E{episode}')
+    : s.pattern;
 }
 
 /* ================================================================
-   5. RENDER
+   4. RENDER
    ================================================================ */
 function render() {
-  const hasFiles = state.files.length > 0;
-
-  // Visibility toggles
-  toggle(DOM.emptyState,    !hasFiles);
-  toggle(DOM.statsPanel,     hasFiles);
-  toggle(DOM.fileListPanel,  hasFiles);
-  toggle(DOM.exportPanel,    hasFiles);
-
-  if (hasFiles) {
-    renderStats();
-    renderFileList();
-    updateZipEstimate();
-  }
+  const has = state.files.length > 0;
+  setVisible(DOM.emptyState,   !has);
+  setVisible(DOM.statsPanel,    has);
+  setVisible(DOM.fileListPanel, has);
+  setVisible(DOM.exportPanel,   has);
+  if (has) { renderStats(); renderFileList(); renderZipEstimate(); }
 }
 
-function toggle(el, show) {
+function setVisible(el, show) {
   if (!el) return;
-  el.classList.toggle('hidden', !show);
+  if (show) { el.classList.remove('hidden'); }
+  else      { el.classList.add('hidden');    }
 }
 
 function renderStats() {
   const files    = state.files;
-  const total    = files.length;
   const bytes    = files.reduce((s, f) => s + f.size, 0);
   const detected = files.filter(f => f.detected).length;
-
-  DOM.statTotal.textContent    = total;
-  DOM.statSize.textContent     = VSRParser.formatFileSize(bytes);
-  DOM.statDetected.textContent = detected;
-  DOM.fileCountBadge.textContent = total;
-
-  const GB = bytes / (1024 ** 3);
+  DOM.statTotal.textContent      = files.length;
+  DOM.statSize.textContent       = VSRParser.formatFileSize(bytes);
+  DOM.statDetected.textContent   = detected;
+  DOM.fileCountBadge.textContent = files.length;
+  const GB = bytes / Math.pow(1024, 3);
   let status = 'good', symbol = '✓';
-  if      (GB > 2)   { status = 'danger';  symbol = '✗'; }
-  else if (GB > 0.8) { status = 'warning'; symbol = '⚠'; }
-
-  DOM.statStatus.textContent       = symbol;
-  DOM.statStatus.dataset.status    = status;
+  if (GB > 2)   { status = 'danger';  symbol = '✗ Risk'; }
+  else if (GB > 0.8) { status = 'warning'; symbol = '⚠ High'; }
+  DOM.statStatus.textContent    = symbol;
+  DOM.statStatus.dataset.status = status;
 }
 
 function renderFileList() {
-  const frag = document.createDocumentFragment();
   const list = state.sortDir === 'desc' ? [...state.files].reverse() : state.files;
-
+  const frag = document.createDocumentFragment();
   list.forEach((entry, i) => {
     const item = document.createElement('div');
     item.className = 'file-item';
     item.setAttribute('role', 'listitem');
-    item.style.animationDelay = `${Math.min(i * 20, 300)}ms`;
-
-    const epClass = entry.detected ? 'file-item__ep' : 'file-item__ep file-item__ep--undetected';
-    const epText  = entry.ep !== null ? entry.ep : '?';
-
-    item.innerHTML = `
-      <span class="file-item__index">${i + 1}</span>
-      <span class="file-item__old" title="${escHtml(entry.oldName)}">${escHtml(truncate(entry.oldName, 45))}</span>
-      <span class="file-item__arrow">→</span>
-      <span class="file-item__new" title="${escHtml(entry.newName)}">${escHtml(entry.newName)}</span>
-      <span class="file-item__size">${VSRParser.formatFileSize(entry.size)}</span>
-      <span class="${epClass}" title="${entry.detected ? 'Auto-detected' : 'Not detected / fallback'}">${epText}</span>
-    `;
+    item.style.animationDelay = Math.min(i * 18, 260) + 'ms';
+    const epCls = 'file-item__ep' + (entry.detected ? '' : ' file-item__ep--undetected');
+    const oldHtml = state.showOld
+      ? '<span class="file-item__old" title="' + escHtml(entry.oldName) + '">' + escHtml(truncate(entry.oldName, 40)) + '</span><span class="file-item__arrow">→</span>'
+      : '<span class="file-item__old"></span><span class="file-item__arrow"></span>';
+    item.innerHTML = '<span class="file-item__index">' + (i + 1) + '</span>' +
+      oldHtml +
+      '<span class="file-item__new" title="' + escHtml(entry.newName) + '">' + escHtml(entry.newName) + '</span>' +
+      '<span class="file-item__size">' + VSRParser.formatFileSize(entry.size) + '</span>' +
+      '<span class="' + epCls + '">' + (entry.ep !== null ? entry.ep : '?') + '</span>';
     frag.appendChild(item);
   });
-
   DOM.fileList.innerHTML = '';
   DOM.fileList.appendChild(frag);
 }
 
-function updateZipEstimate() {
+function renderZipEstimate() {
+  if (!DOM.zipSizeEstimate) return;
   const bytes = state.files.reduce((s, f) => s + f.size, 0);
-  DOM.zipSizeEstimate.textContent = `~${VSRParser.formatFileSize(bytes)} (video files are stored uncompressed)`;
+  DOM.zipSizeEstimate.textContent = '~' + VSRParser.formatFileSize(bytes) + ' · stored uncompressed';
 }
 
 /* ================================================================
-   6. EXPORT FUNCTIONS
+   5. EXPORT
    ================================================================ */
-
 async function downloadZip() {
   if (state.files.length === 0) return;
-
-  const btn = DOM.downloadZipBtn;
-  btn.disabled = true;
-  toggle(DOM.progressWrap, true);
-
+  DOM.downloadZipBtn.disabled = true;
+  setVisible(DOM.progressWrap, true);
   try {
     const zip = new JSZip();
     const total = state.files.length;
-
     for (let i = 0; i < total; i++) {
-      const entry = state.files[i];
-      setProgress(Math.round((i / total) * 90), `Adding ${i + 1}/${total}…`);
-
-      // Small yield to keep UI responsive
-      if (i % 5 === 0) await new Promise(r => setTimeout(r, 0));
-
-      const buf = await entry.file.arrayBuffer();
-      zip.file(entry.newName, buf);
+      setProgress(Math.round((i / total) * 88), 'Queuing ' + (i + 1) + ' / ' + total + '…');
+      if (i % 4 === 0) await new Promise(r => setTimeout(r, 0));
+      zip.file(state.files[i].newName, await state.files[i].file.arrayBuffer());
     }
-
-    setProgress(90, 'Generating ZIP…');
+    setProgress(90, 'Building ZIP…');
     const blob = await zip.generateAsync(
       { type: 'blob', compression: 'STORE' },
-      meta => setProgress(90 + Math.round(meta.percent * 0.1), 'Compressing…')
+      function(meta) { setProgress(90 + Math.round(meta.percent * 0.1), 'Finalising…'); }
     );
-
     setProgress(100, 'Done!');
     triggerDownload(blob, (state.settings.seriesName || 'Renamed_Videos') + '.zip');
-    showToast('ZIP downloaded successfully!', 'success');
+    showToast('ZIP downloaded!', 'success');
   } catch (err) {
-    console.error('ZIP error:', err);
+    console.error('[VSR] ZIP error:', err);
     showToast('ZIP failed: ' + err.message, 'error');
   } finally {
-    btn.disabled = false;
-    setTimeout(() => { toggle(DOM.progressWrap, false); setProgress(0, ''); }, 1500);
+    DOM.downloadZipBtn.disabled = false;
+    setTimeout(function() { setVisible(DOM.progressWrap, false); }, 1800);
   }
 }
 
 async function fsaSaveFolder() {
   if (!('showDirectoryPicker' in window)) return;
   try {
-    const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    const dir = await window.showDirectoryPicker({ mode: 'readwrite' });
     const total = state.files.length;
-
-    toggle(DOM.progressWrap, true);
+    setVisible(DOM.progressWrap, true);
     for (let i = 0; i < total; i++) {
-      const entry = state.files[i];
-      setProgress(Math.round((i / total) * 100), `Saving ${i + 1}/${total}…`);
-
-      const fileHandle = await dirHandle.getFileHandle(entry.newName, { create: true });
-      const writable   = await fileHandle.createWritable();
-      await writable.write(entry.file);
-      await writable.close();
+      setProgress(Math.round((i / total) * 100), 'Saving ' + (i + 1) + ' / ' + total + '…');
+      const fh = await dir.getFileHandle(state.files[i].newName, { create: true });
+      const wr = await fh.createWritable();
+      await wr.write(state.files[i].file);
+      await wr.close();
     }
-    showToast(`Saved ${total} files to folder!`, 'success');
+    showToast('Saved ' + total + ' files!', 'success');
   } catch (err) {
-    if (err.name !== 'AbortError') showToast('Save failed: ' + err.message, 'error');
+    if (err.name !== 'AbortError') showToast('Save error: ' + err.message, 'error');
   } finally {
-    toggle(DOM.progressWrap, false);
+    setVisible(DOM.progressWrap, false);
     setProgress(0, '');
   }
 }
 
 function downloadScript() {
   if (state.files.length === 0) return;
-
-  // Bash script
-  const bashLines = [
-    '#!/usr/bin/env bash',
-    '# Generated by Video Specialist Renamer V3',
-    '# Run in the folder containing your video files.',
-    '',
-    ...state.files.map(e =>
-      `mv -v "${e.oldName.replace(/"/g, '\\"')}" "${e.newName.replace(/"/g, '\\"')}"`
-    ),
-  ];
-
-  // Windows batch script
-  const batLines = [
-    '@echo off',
-    'REM Generated by Video Specialist Renamer V3',
-    '',
-    ...state.files.map(e =>
-      `rename "${e.oldName.replace(/"/g, '""')}" "${e.newName.replace(/"/g, '""')}"`
-    ),
-  ];
-
-  const combined = bashLines.join('\n') + '\n\n\n' + batLines.join('\r\n');
-  const blob = new Blob([combined], { type: 'text/plain;charset=utf-8' });
-  triggerDownload(blob, 'rename_script.sh');
-  showToast('Rename script downloaded!', 'info');
+  const bash = ['#!/usr/bin/env bash', '# Video Specialist Renamer V3', '']
+    .concat(state.files.map(function(e) {
+      return "mv -v '" + e.oldName.replace(/'/g, "'\\''") + "' '" + e.newName.replace(/'/g, "'\\''") + "'";
+    })).join('\n');
+  const bat = ['@echo off', 'REM Video Specialist Renamer V3', '']
+    .concat(state.files.map(function(e) {
+      return 'ren "' + e.oldName.replace(/"/g, '""') + '" "' + e.newName.replace(/"/g, '""') + '"';
+    })).join('\r\n');
+  triggerDownload(new Blob([bash + '\n\n\n' + bat], { type: 'text/plain;charset=utf-8' }), 'rename_script.sh');
+  showToast('Script downloaded!', 'info');
 }
 
 function downloadCsv() {
   if (state.files.length === 0) return;
-
-  const rows = [
-    ['Index', 'Original Filename', 'New Filename', 'Size (bytes)', 'Detected Episode', 'Auto-detected'],
-    ...state.files.map((e, i) => [
-      i + 1, e.oldName, e.newName, e.size, e.ep ?? '', e.detected ? 'Yes' : 'No',
-    ]),
-  ];
-
-  const csv = rows.map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-  triggerDownload(blob, 'rename_log.csv');
+  const rows = [['#', 'Original Name', 'New Name', 'Size (B)', 'Episode', 'Auto-detected']]
+    .concat(state.files.map(function(e, i) {
+      return [i + 1, e.oldName, e.newName, e.size, e.ep !== null ? e.ep : '', e.detected ? 'Yes' : 'No'];
+    }));
+  const csv = rows.map(function(r) {
+    return r.map(function(c) { return '"' + String(c).replace(/"/g, '""') + '"'; }).join(',');
+  }).join('\n');
+  triggerDownload(new Blob([csv], { type: 'text/csv;charset=utf-8' }), 'rename_log.csv');
   showToast('CSV log downloaded!', 'info');
 }
 
 /* ================================================================
-   7. HELPERS
+   6. HELPERS
    ================================================================ */
 function triggerDownload(blob, filename) {
   const url = URL.createObjectURL(blob);
-  const a   = Object.assign(document.createElement('a'), { href: url, download: filename });
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 30000);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function() { URL.revokeObjectURL(url); }, 60000);
 }
-
 function setProgress(pct, label) {
-  DOM.progressFill.style.width  = `${pct}%`;
-  DOM.progressLabel.textContent = label;
+  if (DOM.progressFill)  DOM.progressFill.style.width    = pct + '%';
+  if (DOM.progressLabel) DOM.progressLabel.textContent   = label;
 }
-
-function showToast(message, type = 'info', duration = 3500) {
-  const toast = document.createElement('div');
-  toast.className = `toast toast--${type}`;
-  toast.textContent = message;
-  DOM.toastContainer.appendChild(toast);
-
-  setTimeout(() => {
-    toast.classList.add('toast--exit');
-    toast.addEventListener('animationend', () => toast.remove(), { once: true });
+function showToast(msg, type, duration) {
+  type = type || 'info'; duration = duration || 3500;
+  if (!DOM.toastContainer) return;
+  const t = document.createElement('div');
+  t.className = 'toast toast--' + type;
+  t.textContent = msg;
+  DOM.toastContainer.appendChild(t);
+  setTimeout(function() {
+    t.classList.add('toast--exit');
+    t.addEventListener('animationend', function() { t.remove(); }, { once: true });
   }, duration);
 }
-
 function escHtml(str) {
-  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
-
 function truncate(str, max) {
   return str.length <= max ? str : str.slice(0, max - 1) + '…';
 }
 
 /* ================================================================
-   8. EVENT WIRING
+   7. INIT — runs after DOMContentLoaded
    ================================================================ */
 function init() {
-  // ── File input (click-to-browse) ──────────────────────────────
-  DOM.dropZone.addEventListener('click', () => DOM.fileInput.click());
-  DOM.dropZone.addEventListener('keydown', e => {
+
+  /* Step 1 ─ Build DOM refs NOW (elements are in the document) */
+  var get = function(id) {
+    var el = document.getElementById(id);
+    if (!el) console.warn('[VSR] Missing element: #' + id);
+    return el;
+  };
+
+  DOM = {
+    fileInput:          get('fileInput'),
+    dropZone:           get('dropZone'),
+    fsaRow:             get('fsaRow'),
+    fsaOpenBtn:         get('fsaOpenBtn'),
+    fsaSaveBtn:         get('fsaSaveBtn'),
+    statsPanel:         get('statsPanel'),
+    statTotal:          get('statTotal'),
+    statSize:           get('statSize'),
+    statDetected:       get('statDetected'),
+    statStatus:         get('statStatus'),
+    fileListPanel:      get('fileListPanel'),
+    fileList:           get('fileList'),
+    fileListHeader:     get('fileListHeader'),
+    fileCountBadge:     get('fileCountBadge'),
+    togglePreviewBtn:   get('togglePreviewBtn'),
+    clearAllBtn:        get('clearAllBtn'),
+    exportPanel:        get('exportPanel'),
+    progressWrap:       get('progressWrap'),
+    progressFill:       get('progressFill'),
+    progressLabel:      get('progressLabel'),
+    zipSizeEstimate:    get('zipSizeEstimate'),
+    downloadZipBtn:     get('downloadZipBtn'),
+    downloadScriptBtn:  get('downloadScriptBtn'),
+    downloadCsvBtn:     get('downloadCsvBtn'),
+    emptyState:         get('emptyState'),
+    toastContainer:     get('toastContainer'),
+    offlineBadge:       get('offlineBadge'),
+    animeName:          get('animeName'),
+    season:             get('season'),
+    startEpisode:       get('startEpisode'),
+    padWidth:           get('padWidth'),
+    pattern:            get('pattern'),
+    customPatternGroup: get('customPatternGroup'),
+    customPattern:      get('customPattern'),
+    smartClean:         get('smartClean'),
+    autoDetect:         get('autoDetect'),
+    epOffset:           get('epOffset'),
+    applyOffsetBtn:     get('applyOffsetBtn'),
+    sortAscBtn:         get('sortAscBtn'),
+    sortDescBtn:        get('sortDescBtn'),
+  };
+
+  /* Step 2 ─ Guard: parser must be loaded */
+  if (typeof window.VSRParser === 'undefined') {
+    console.error('[VSR] parser.js not loaded!');
+    showToast('Fatal: parser.js missing. Reload page.', 'error', 10000);
+    return;
+  }
+
+  /* Step 3 ─ File input: drop zone click opens picker */
+  DOM.dropZone.addEventListener('click', function() {
+    DOM.fileInput.click();
+  });
+  DOM.dropZone.addEventListener('keydown', function(e) {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); DOM.fileInput.click(); }
   });
-
-  DOM.fileInput.addEventListener('change', e => {
+  DOM.fileInput.addEventListener('change', function(e) {
     processFiles(e.target.files);
-    e.target.value = ''; // Reset so same files can be re-selected
+    e.target.value = '';
   });
 
-  // ── Drag and drop ─────────────────────────────────────────────
-  DOM.dropZone.addEventListener('dragover', e => {
+  /* Step 4 ─ Drag and drop */
+  DOM.dropZone.addEventListener('dragover', function(e) {
     e.preventDefault();
     DOM.dropZone.classList.add('drag-over');
   });
-
-  ['dragleave', 'dragend'].forEach(evt =>
-    DOM.dropZone.addEventListener(evt, () => DOM.dropZone.classList.remove('drag-over'))
-  );
-
-  DOM.dropZone.addEventListener('drop', e => {
+  ['dragleave', 'dragend'].forEach(function(evt) {
+    DOM.dropZone.addEventListener(evt, function() {
+      DOM.dropZone.classList.remove('drag-over');
+    });
+  });
+  DOM.dropZone.addEventListener('drop', function(e) {
     e.preventDefault();
     DOM.dropZone.classList.remove('drag-over');
     processFiles(e.dataTransfer.files);
   });
-
-  // Also accept drops on the whole page
-  document.addEventListener('dragover', e => e.preventDefault());
-  document.addEventListener('drop', e => {
+  document.addEventListener('dragover', function(e) { e.preventDefault(); });
+  document.addEventListener('drop', function(e) {
     e.preventDefault();
-    if (e.dataTransfer.files.length) processFiles(e.dataTransfer.files);
+    if (e.target !== DOM.dropZone && e.dataTransfer.files.length) {
+      processFiles(e.dataTransfer.files);
+    }
   });
 
-  // ── File System Access API ────────────────────────────────────
-  if ('showOpenFilePicker' in window) {
+  /* Step 5 ─ File System Access API (desktop only) */
+  if ('showOpenFilePicker' in window && DOM.fsaRow) {
     DOM.fsaRow.style.display = 'flex';
-    DOM.fsaOpenBtn.addEventListener('click', async () => {
+    DOM.fsaOpenBtn.addEventListener('click', async function() {
       try {
         const handles = await window.showOpenFilePicker({
           multiple: true,
-          types: [{
-            description: 'Video files',
-            accept: { 'video/*': ['.mkv','.mp4','.avi','.mov','.wmv','.flv','.webm','.m4v'] },
-          }],
+          types: [{ description: 'Video files',
+            accept: { 'video/*': ['.mkv','.mp4','.avi','.mov','.wmv','.flv','.webm','.m4v','.ts'] } }],
         });
-        const files = await Promise.all(handles.map(h => h.getFile()));
-        processFiles(files);
-      } catch (err) {
-        if (err.name !== 'AbortError') showToast('Could not open files: ' + err.message, 'error');
+        processFiles(await Promise.all(handles.map(function(h) { return h.getFile(); })));
+      } catch(err) {
+        if (err.name !== 'AbortError') showToast('Open failed: ' + err.message, 'error');
       }
     });
   }
-
-  if ('showDirectoryPicker' in window) {
+  if ('showDirectoryPicker' in window && DOM.fsaSaveBtn) {
     DOM.fsaSaveBtn.classList.remove('hidden');
     DOM.fsaSaveBtn.addEventListener('click', fsaSaveFolder);
   }
 
-  // ── Settings change handlers ──────────────────────────────────
-  DOM.animeName.addEventListener('input', () => {
-    state.settings.seriesName = DOM.animeName.value;
-    rebuildNames();
+  /* Step 6 ─ Settings */
+  DOM.animeName.addEventListener('input', function() {
+    state.settings.seriesName = DOM.animeName.value; rebuildNames();
+  });
+  DOM.season.addEventListener('input', function() {
+    state.settings.season = DOM.season.value; rebuildNames();
+  });
+  DOM.startEpisode.addEventListener('input', function() {
+    state.settings.startEp = Math.max(0, parseInt(DOM.startEpisode.value, 10) || 1); rebuildNames();
+  });
+  DOM.padWidth.addEventListener('change', function() {
+    state.settings.padWidth = parseInt(DOM.padWidth.value, 10) || 2; rebuildNames();
   });
 
-  DOM.season.addEventListener('input', () => {
-    state.settings.season = DOM.season.value;
-    rebuildNames();
-  });
-
-  DOM.startEpisode.addEventListener('input', () => {
-    state.settings.startEp = parseInt(DOM.startEpisode.value, 10) || 1;
-    rebuildNames();
-  });
-
-  DOM.padWidth.addEventListener('change', () => {
-    state.settings.padWidth = parseInt(DOM.padWidth.value, 10) || 2;
-    rebuildNames();
-  });
-
-  DOM.pattern.addEventListener('change', () => {
-    const val = DOM.pattern.value;
+  /* ── CUSTOM PATTERN FIX ──────────────────────────────────────
+     Direct classList.remove/add — no helper wrapper, no ambiguity. */
+  DOM.pattern.addEventListener('change', function() {
+    var val = DOM.pattern.value;
     state.settings.pattern = val;
-    toggle(DOM.customPatternGroup, val === 'custom');
-    rebuildNames();
-  });
-
-  DOM.customPattern.addEventListener('input', () => {
-    state.settings.customPat = DOM.customPattern.value;
-    rebuildNames();
-  });
-
-  DOM.smartClean.addEventListener('change', () => {
-    state.settings.smartClean = DOM.smartClean.checked;
-    rebuildNames();
-  });
-
-  DOM.autoDetect.addEventListener('change', () => {
-    state.settings.autoDetect = DOM.autoDetect.checked;
-    rebuildNames();
-  });
-
-  // ── File list controls ────────────────────────────────────────
-  DOM.togglePreviewBtn.addEventListener('click', () => {
-    state.showOld = !state.showOld;
-    // Toggle header column visibility
-    DOM.fileListHeader.querySelector('.col--old').style.display = state.showOld ? '' : '';
-    renderFileList();
-  });
-
-  DOM.clearAllBtn.addEventListener('click', () => {
-    if (state.files.length === 0) return;
-    if (confirm(`Clear all ${state.files.length} loaded files?`)) {
-      setState({ files: [] });
-      showToast('Cleared all files', 'info');
+    if (val === 'custom') {
+      DOM.customPatternGroup.classList.remove('hidden');
+      DOM.customPattern.focus();
+    } else {
+      DOM.customPatternGroup.classList.add('hidden');
     }
+    rebuildNames();
   });
 
-  // ── Offset & Sort ─────────────────────────────────────────────
-  DOM.applyOffsetBtn.addEventListener('click', () => {
+  DOM.customPattern.addEventListener('input', function() {
+    state.settings.customPat = DOM.customPattern.value; rebuildNames();
+  });
+  DOM.smartClean.addEventListener('change', function() {
+    state.settings.smartClean = DOM.smartClean.checked; rebuildNames();
+  });
+  DOM.autoDetect.addEventListener('change', function() {
+    state.settings.autoDetect = DOM.autoDetect.checked; rebuildNames();
+  });
+
+  /* Step 7 ─ File list controls */
+  DOM.togglePreviewBtn.addEventListener('click', function() {
+    state.showOld = !state.showOld; renderFileList();
+  });
+  DOM.clearAllBtn.addEventListener('click', function() {
+    if (state.files.length === 0) return;
+    if (!confirm('Remove all ' + state.files.length + ' loaded file(s)?')) return;
+    setState({ files: [] });
+    showToast('Cleared', 'info');
+  });
+
+  /* Step 8 ─ Offset & Sort */
+  DOM.applyOffsetBtn.addEventListener('click', function() {
     state.epOffset = parseInt(DOM.epOffset.value, 10) || 0;
     rebuildNames();
-    showToast(`Offset ${state.epOffset >= 0 ? '+' : ''}${state.epOffset} applied`, 'info');
+    var sign = state.epOffset >= 0 ? '+' : '';
+    showToast('Episode offset: ' + sign + state.epOffset, 'info');
   });
-
-  DOM.sortAscBtn.addEventListener('click', () => {
-    state.sortDir = 'asc';
-    renderFileList();
+  DOM.epOffset.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') DOM.applyOffsetBtn.click();
   });
+  DOM.sortAscBtn.addEventListener('click', function() { state.sortDir = 'asc';  renderFileList(); });
+  DOM.sortDescBtn.addEventListener('click', function() { state.sortDir = 'desc'; renderFileList(); });
 
-  DOM.sortDescBtn.addEventListener('click', () => {
-    state.sortDir = 'desc';
-    renderFileList();
-  });
-
-  // ── Export ────────────────────────────────────────────────────
+  /* Step 9 ─ Export */
   DOM.downloadZipBtn.addEventListener('click', downloadZip);
   DOM.downloadScriptBtn.addEventListener('click', downloadScript);
   DOM.downloadCsvBtn.addEventListener('click', downloadCsv);
 
-  // ── PWA / Service Worker ──────────────────────────────────────
+  /* Step 10 ─ Service Worker (deferred until after load) */
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').then(reg => {
-      console.log('[VSR] SW registered, scope:', reg.scope);
-    }).catch(err => {
-      console.warn('[VSR] SW registration failed:', err);
+    window.addEventListener('load', function() {
+      navigator.serviceWorker.register('./sw.js')
+        .then(function(r) { console.log('[VSR] SW registered, scope:', r.scope); })
+        .catch(function(e) { console.warn('[VSR] SW failed:', e); });
     });
   }
 
-  // ── Offline badge ─────────────────────────────────────────────
-  function updateOnlineStatus() {
-    const online = navigator.onLine;
-    DOM.offlineBadge.style.opacity = online ? '1' : '0.5';
-    DOM.offlineBadge.title = online ? 'Online — app works fully offline too' : 'Offline — app still works!';
+  /* Step 11 ─ Online badge */
+  function syncBadge() {
+    if (!DOM.offlineBadge) return;
+    DOM.offlineBadge.title = navigator.onLine
+      ? 'Online — app also works fully offline'
+      : 'Offline — all features still work!';
   }
-  window.addEventListener('online',  updateOnlineStatus);
-  window.addEventListener('offline', updateOnlineStatus);
-  updateOnlineStatus();
+  window.addEventListener('online',  syncBadge);
+  window.addEventListener('offline', syncBadge);
+  syncBadge();
 
-  // ── Initial render ────────────────────────────────────────────
+  /* Step 12 ─ First render */
   render();
-  console.log('[VSR] App initialised. Parser:', window.VSRParser);
+  console.log('[VSR] ✓ Ready — VSRParser:', !!window.VSRParser, '— JSZip:', !!window.JSZip);
 }
 
 /* ================================================================
-   9. BOOTSTRAP
+   8. BOOTSTRAP
    ================================================================ */
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init);
+  document.addEventListener('DOMContentLoaded', init, { once: true });
 } else {
   init();
 }
