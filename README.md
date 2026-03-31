@@ -34,6 +34,8 @@ Check the Preview & Edit list. If the episode numbers are off (e.g., the show st
 4. Export
  * Download as ZIP: Best for small batches or moving files.
  * Bash/Batch Script: Best for large libraries. Run the downloaded script in your local folder to rename the actual files on your hard drive instantly.
+
+   
 ⚖️ Third-Party Credits
 This project utilizes the following open-source libraries:
  * JSZip: Used for generating ZIP archives in the browser. (MIT Licensed)
